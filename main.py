@@ -21,14 +21,6 @@ try:
 except:
 	os.system("ls /dev/ | grep USB")
 
-queue_mouse = queue.Queue(maxsize=10000)
-queue_move = queue.Queue(maxsize=10000)
-queue_keyboard = queue.Queue(maxsize=10000)
-queue_inference = queue.Queue(maxsize=10000)
-queue_hrm = queue.Queue(maxsize=10000)
-queue_imu_left = queue.Queue(maxsize=10000)
-queue_imu_right = queue.Queue(maxsize=10000)
-
 clicks_max = 3
 clicks_min = 0
 presses_max = 3
@@ -50,6 +42,14 @@ imu_right_y_max = 1000
 imu_right_z_min = 0
 imu_right_z_max = 1000
 
+queue_mouse = queue.Queue(maxsize=10000)
+queue_move = queue.Queue(maxsize=10000)
+queue_keyboard = queue.Queue(maxsize=10000)
+queue_pc_data = queue.Queue(maxsize=10000)
+queue_hrm = queue.Queue(maxsize=10000)
+queue_imu_left = queue.Queue(maxsize=10000)
+queue_imu_right = queue.Queue(maxsize=10000)
+
 def mouse_on_move(x, y):
 	queue_move.put(str(x)+","+str(y))
 
@@ -63,11 +63,11 @@ def keyboard_on_press(key):
 def predict(features):
 	return features[0] > 2
 	
-def inference(queue_inference, queue_hrm, queue_imu_left, queue_imu_right):
+def inference(queue_pc_data, queue_hrm, queue_imu_left, queue_imu_right):
 	while True:
 		#start = time.time()
 
-		item = queue_inference.get()
+		item = queue_pc_data.get()
 		#print(time.time() - start)
 		clicks, presses, movements = np.array(item.split(","), dtype=float)
 		clicks = np.clip(clicks, clicks_min, clicks_max)
@@ -130,7 +130,7 @@ def imu_reader(queue_imu, device_imu, test):
 		if end - start > 1.0:
 			queue_imu.put(str(imu_x)+","+str(imu_y)+","+str(imu_z))
 
-def dequeue(queue_mouse, queue_keyboard, queue_move, queue_inference):
+def pc_data_reader(queue_mouse, queue_keyboard, queue_move, queue_pc_data):
 	clicks_statistics = [0, 0, 0, 0]
 	presses_statistics = [0, 0, 0, 0]
 	movements_statistics = [0, 0, 0, 0]
@@ -183,7 +183,7 @@ def dequeue(queue_mouse, queue_keyboard, queue_move, queue_inference):
 			presses_statistics.pop(0)
 			movements_statistics.pop(0)
 
-			queue_inference.put(str(clicks_avg)+","+str(presses_avg)+","+str(movements_avg))
+			queue_pc_data.put(str(clicks_avg)+","+str(presses_avg)+","+str(movements_avg))
 
 			start = time.time()
 
@@ -195,17 +195,17 @@ mouse_listener = mouse.Listener(
 
 keyboard_listener = keyboard.Listener(on_press=keyboard_on_press)
 
-dequeue_thread = Thread(target=dequeue, args=(queue_mouse, queue_keyboard, queue_move, queue_inference))
+pc_data_thread = Thread(target=pc_data_reader, args=(queue_mouse, queue_keyboard, queue_move, queue_pc_data))
 hrm_thread = Thread(target=hrm_reader, args=(queue_hrm,))
-inference_thread = Thread(target=inference, args=(queue_inference, queue_hrm, queue_imu_left, queue_imu_right))
+inference_thread = Thread(target=inference, args=(queue_pc_data, queue_hrm, queue_imu_left, queue_imu_right))
 imu_left_thread = Thread(target=imu_reader, args=(queue_imu_left, imu_left_device, (228, 404, 999)))
 imu_right_thread = Thread(target=imu_reader, args=(queue_imu_right, imu_right_device, (1, 2, 3)))
 
-dequeue_thread.start()
+pc_data_thread.start()
 mouse_listener.start()
-hrm_thread.start()
 keyboard_listener.start()
-inference_thread.start()
+hrm_thread.start()
 imu_left_thread.start()
 imu_right_thread.start()
+inference_thread.start()
 
