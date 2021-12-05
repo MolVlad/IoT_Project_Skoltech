@@ -24,7 +24,6 @@ def write_raw_data_to_queue(rec_data, imu_side):
         elif imu_side == RIGHT_IMU:
             right.append(np.abs(rec_data)) # append absolute value
 
-
 def preliminary_prepr(imu_side):
     if (left or right) is None or (left or right) == []:
         return
@@ -34,8 +33,7 @@ def preliminary_prepr(imu_side):
                 return
             else:
                 popped_queue = [left.pop(0) for i in range(36)] # 36 because of sampling rate (36 Hz)
-                left_avg.append(np.mean(np.reshape(popped_queue, (36,6)), axis = 0)) # calculate avg value in 1 sec 
-                
+                left_avg.append(np.mean(np.reshape(popped_queue, (36,6)), axis = 0)) # calculate avg value in 1 sec      
         elif imu_side == RIGHT_IMU:
             if len(right) < 36:
                 return
