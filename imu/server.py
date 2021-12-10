@@ -1,41 +1,80 @@
 import socket
 import numpy as np
 
-localIP     = '192.168.0.103' #specify your server IP
+localIP     = '192.168.133.121' #specify your server IP
 localPort   = 60001 # specify port
 bufferSize  = 1024 #define buffer size
 
-LEFT_IMU = '192.168.0.108' #specify adress of the left imu
-RIGHT_IMU = '192.168.0.110' #specify adress of the right imu
+LEFT_IMU = '192.168.133.244' #specify adress of the left imu
+RIGHT_IMU = '192.168.133.181' #specify adress of the right imu
 
 left = []
 right = []
 
+data_for_calibration_left = []
+data_for_calibration_right = []
+
 left_avg = []
 right_avg = []
-# data for calibration
-data_for_calibration = []
-med_acc_x, med_acc_y, med_acc_z, med_gyro_x, med_gyro_y, med_gyro_z = 0
-ql_acc_x, qr_acc_x, ql_acc_y, qr_acc_y, ql_acc_z, qr_acc_z = 0
-ql_gyro_x, qr_gyro_x, ql_gyro_y, qr_gyro_y, ql_gyro_z, qr_gyro_z = 0
 
-normalized_medians = [0, 0, 0, 0, 0, 0] # need to divide each value by N - number of samples ((x1-c + x2-c +...+ xn-c)/n = np.mean(x) - c/n)
-# для клиппинга берем что то типо min(max(число, квантиль))
-def write_raw_data_to_queue(rec_data, imu_side):
+median_left = []
+median_right = []
+quantiles_right = []
+quantiles_left = []
+
+sampling_rate = 36
+time_duration = 10
+
+# TODO smothing
+def exp_smoothing():
+    pass
+
+def write_raw_data_to_queue(rec_data, imu_side, calibration_flag = False):
+    global left
+    global right
+    global data_for_calibration_left
+    global data_for_calibration_right
     if rec_data is None or rec_data == []:
         return
     else:
-        if imu_side == LEFT_IMU:
-            left.append(np.abs(rec_data)) # append absolute value
+        if imu_side == LEFT_IMU and calibration_flag:
+            data_for_calibration_left.append(rec_data)
+        elif imu_side == LEFT_IMU:
+            for index, element in enumerate(rec_data): # clipping
+                element = max(quantiles_left[0][index], element)
+                element = min(quantiles_left[1][index], element)
+                rec_data[index] = element
+            data = rec_data - median_left # sub median
+            left.append(np.abs(data)) # add abs values
+        if imu_side == RIGHT_IMU and calibration_flag:
+            data_for_calibration_right.append(rec_data)
         elif imu_side == RIGHT_IMU:
-            right.append(np.abs(rec_data)) # append absolute value
+            for index, element in enumerate(rec_data): # clipping
+                element = max(quantiles_right[0][index], element)
+                element = min(quantiles_right[1][index], element)
+                rec_data[index] = element
+            data = rec_data - median_right # sub median
+            left.append(np.abs(data)) # add abs values 
 
 def calibration(sampling_rate, time_duration):
-    if len(data_for_calibration) < sampling_rate * time_duration:
-        return
-    else:
-        pass
-def preliminary_prepr(imu_side):
+    global data_for_calibration_left
+    global data_for_calibration_right
+    global median_left
+    global median_right
+    global quantiles_left
+    global quantiles_right
+    data_for_calibration_left = data_for_calibration_left[: sampling_rate * time_duration]
+    #data_for_calibration_right = data_for_calibration_right[: sampling_rate * time_duration]
+    median_left = np.median(data_for_calibration_left, axis = 0)
+    #median_right = np.median(data_for_calibration_right, axis = 0)
+    quantiles_left = np.quantile(data_for_calibration_left, [0.005, 0.995], axis = 0)
+    #quantiles_right = np.quantile(data_for_calibration_right, [0.005, 0.995], axis = 0)
+    #return (median_left, median_right, quantiles_left, quantiles_right)
+
+# переписать с учетом квантилей и тд 
+def resampling(imu_side):
+    global left_avg
+    global right_avg
     if (left or right) is None or (left or right) == []:
         return
     else:
@@ -52,7 +91,7 @@ def preliminary_prepr(imu_side):
                 popped_queue = [right.pop(0) for i in range(36)] # 36 because of sampling rate (36 Hz)
                 right_avg.append(np.mean(np.reshape(popped_queue, (36,6)), axis = 0)) # calculate avg value in 1 sec 
         
-def run_server():
+def run_server(sampling_rate, time_duration):
     UDPServerSocket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) #create socket
     UDPServerSocket.bind((localIP, localPort)) # bind port and ip
     while True:
@@ -60,14 +99,52 @@ def run_server():
         message = bytesAddressPair[0].decode('utf-8').replace('\n', '').split(',')
         received_data = list(np.array(message, dtype = float))
         address = bytesAddressPair[1]
-        write_raw_data_to_queue(received_data, address[0])
-        preliminary_prepr(address[0])
-        if left_avg != []: 
-             print(left_avg.pop(0)) # just for debug
-             print(right_avg.pop(0))
-
+        if len(data_for_calibration_left) < sampling_rate * time_duration: # put condition for right buff
+            write_raw_data_to_queue(received_data, address[0], calibration_flag = True)
+        else:
+            if quantiles_left == [] and quantiles_right == []: # put condition for right buff
+                calibration(sampling_rate, time_duration)
+            #print(median_left, median_right, quantiles_left, quantiles_right)
+            write_raw_data_to_queue(received_data, address[0])
+            resampling(address[0])
+            if left_avg != []:
+                print(left_avg.pop(0))
+            if right_avg != []:
+                print(right_avg.pop(0))
+        # resampling(address[0])
+        # if left_avg != []: 
+        #      print(left_avg.pop(0)) # just for debug
+        #      print(right_avg.pop(0))
 
 if __name__ == "__main__":
-    run_server()
-# [0 0.36 0.4 0.533 0.567 1]
-# [-60 -60 0 0 -60 -60]
+    run_server(sampling_rate, time_duration)
+# 2f2e0042c974
+# 192.168.121.133
+
+#code from anton
+"""
+def time_ewa(series, halflife, mode):
+    time_diffs = series.index / pd.Timedelta(seconds=1)
+    time_diffs = time_diffs.values
+    time_diffs = time_diffs.max() - time_diffs
+    # Folmula from https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.ewm.html
+    alpha = 1 - np.exp(np.log(0.5) / halflife)
+    weights = (1 - alpha) ** time_diffs
+    if mode == 'mean':  # Normalizing all weights to zero
+        weights = weights / weights.sum()
+    elif mode == 'sum':
+        # Keeping weights as is
+        pass
+    else:
+        raise ValueError(f'Don\'t know mode {mode}')
+
+    result = (series * weights).sum()
+
+    return result
+
+def smooth_df(df, halflife, mode='mean'):
+    window_size = pd.Timedelta(seconds=halflife * args.halflifes_in_window)
+    df_smoothed = df.rolling(window=window_size).apply(lambda x: time_ewa(x, halflife, mode))
+
+    return df_smoothed
+"""
