@@ -100,7 +100,7 @@ def run_server(sampling_rate, time_duration):
         if len(data_for_calibration_left) < sampling_rate * time_duration: # put condition for right buff
             write_raw_data_to_queue(received_data, address[0], calibration_flag = True)
         else:
-            if quantiles_left == [] and quantiles_right == []: # put condition for right buff
+            if quantiles_left == [] and median_left == []: # put condition for right buff
                 calibration(sampling_rate, time_duration)
             write_raw_data_to_queue(received_data, address[0])
             resampling(address[0])
