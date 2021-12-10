@@ -64,14 +64,12 @@ def calibration(sampling_rate, time_duration):
     global quantiles_left
     global quantiles_right
     data_for_calibration_left = data_for_calibration_left[: sampling_rate * time_duration]
-    #data_for_calibration_right = data_for_calibration_right[: sampling_rate * time_duration]
+    #data_for_calibration_right = data_for_calibration_right[: sampling_rate * time_duration] # add if right imu is working
     median_left = np.median(data_for_calibration_left, axis = 0)
     #median_right = np.median(data_for_calibration_right, axis = 0)
     quantiles_left = np.quantile(data_for_calibration_left, [0.005, 0.995], axis = 0)
-    #quantiles_right = np.quantile(data_for_calibration_right, [0.005, 0.995], axis = 0)
-    #return (median_left, median_right, quantiles_left, quantiles_right)
+    #quantiles_right = np.quantile(data_for_calibration_right, [0.005, 0.995], axis = 0)   # add if right imu is working
 
-# переписать с учетом квантилей и тд 
 def resampling(imu_side):
     global left_avg
     global right_avg
@@ -104,22 +102,17 @@ def run_server(sampling_rate, time_duration):
         else:
             if quantiles_left == [] and quantiles_right == []: # put condition for right buff
                 calibration(sampling_rate, time_duration)
-            #print(median_left, median_right, quantiles_left, quantiles_right)
             write_raw_data_to_queue(received_data, address[0])
             resampling(address[0])
+            # debug stuff
             if left_avg != []:
                 print(left_avg.pop(0))
             if right_avg != []:
                 print(right_avg.pop(0))
-        # resampling(address[0])
-        # if left_avg != []: 
-        #      print(left_avg.pop(0)) # just for debug
-        #      print(right_avg.pop(0))
+
 
 if __name__ == "__main__":
     run_server(sampling_rate, time_duration)
-# 2f2e0042c974
-# 192.168.121.133
 
 #code from anton
 """
