@@ -9,46 +9,191 @@ from threading import Thread
 import time
 import os
 import serial
+import socket
+import pickle
 
-hrm_device = "/dev/ttyUSB1"
-imu_left_device = "/dev/ttyUSB1"
-imu_right_device = "/dev/ttyUSB1"
+#import ssl
+#from urllib.request import http
+#ssl._create_default_https_context = ssl._create_unverified_context
+#endpoint = "/api/events?accessKey=ist_oreA-PIOUM3vQQIVkPe4a38O-yozwVNN&bucketKey=PDFFXR8PBQKH"
+#feature_names = ['mouse_clicks', 'mouse_movement', 'buttons_pressed', 'heart_rate', 
+#        'left_linaccel_x','left_linaccel_y','left_linaccel_z','left_gyro_x','left_gyro_y','left_gyro_z',
+#        'right_linaccel_x','right_linaccel_y','right_linaccel_z','right_gyro_x','right_gyro_y','right_gyro_z',
+#        ]
+
+ports = [50003,50018,50004,50002,50005,50006,50007,50011,50012,50013,50008,50009,50010,50014,50015,50016]
+
+hrm_device = "/dev/ttyUSB0"
 
 try:
-	hrm_serial = serial.Serial(hrm_device, baudrate=115200, timeout=0.5)
-	#imu_left_serial = serial.Serial(imu_left_device, baudrate=115200)
-	#imu_right_serial = serial.Serial(imu_right_device, baudrate=115200)
+	hrm_serial = serial.Serial(hrm_device, baudrate=115200, timeout=0.01)
+	print("HRM is successfully connected")
 except:
+	print("HRM is not connected")
 	os.system("ls /dev/ | grep USB")
+	exit()
 
-clicks_max = 3
-clicks_min = 0
-presses_max = 3
-presses_min = 0
-movements_max = 500000
-movements_min = 0
-hrm_rate_max = 150
-hrm_rate_min = 0
-imu_left_x_min = 0
-imu_left_x_max = 1000
-imu_left_y_min = 0
-imu_left_y_max = 1000
-imu_left_z_min = 0
-imu_left_z_max = 1000
-imu_right_x_min = 0
-imu_right_x_max = 1000
-imu_right_y_min = 0
-imu_right_y_max = 1000
-imu_right_z_min = 0
-imu_right_z_max = 1000
+with open('model.pkl', 'rb') as fid:
+	loaded_model = pickle.load(fid)
+
+sampling_rate = 36
+calibration_duration = 1
+proba_threshold = 0.5
+
+localIP     = '192.168.1.5' #specify your server IP
+localPort   = 60001 # specify port
+bufferSize  = 1024 #define buffer size
 
 queue_mouse = queue.Queue(maxsize=10000)
 queue_move = queue.Queue(maxsize=10000)
 queue_keyboard = queue.Queue(maxsize=10000)
 queue_pc_data = queue.Queue(maxsize=10000)
 queue_hrm = queue.Queue(maxsize=10000)
-queue_imu_left = queue.Queue(maxsize=10000)
-queue_imu_right = queue.Queue(maxsize=10000)
+queue_imu = queue.Queue(maxsize=10000)
+
+UDP_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) #create socket
+UDP_socket.bind((localIP, localPort)) # bind port and ip
+UDP_socket.settimeout(0.01)
+
+def predict(features):
+	predicted_proba = loaded_model.predict_proba([features])[:,1]
+
+	print(array2str(features.round(2)))
+	print(predicted_proba)
+
+	print(features[0])
+	for i, _ in enumerate(features):
+		UDP_socket.sendto(bytes(str(features[i].round(2)), "utf-8"),("13.40.48.121",ports[i]))
+
+	UDP_socket.sendto(bytes(str(predicted_proba.round(2)[0]), "utf-8"),("13.40.48.121",50020))
+	UDP_socket.sendto(bytes(str(int(predicted_proba.round(2)[0] > proba_threshold)), "utf-8"),("13.40.48.121",50021))
+
+	return predicted_proba > proba_threshold
+	
+def inference(queue_pc_data, queue_hrm, queue_imu):
+	queue_pc_data.queue.clear()
+	queue_hrm.queue.clear()
+	queue_imu.queue.clear()
+
+	while True:
+		start = time.time()
+
+		item = queue_pc_data.get()
+		clicks, presses, movements = np.array(item.split(","), dtype=float)
+		#print(time.time() - start)
+
+		hrm_rate = float(queue_hrm.get())
+		#print(time.time() - start)
+
+		item = queue_imu.get()
+		imu_left_linaccel_x, imu_left_linaccel_y, imu_left_linaccel_z, \
+			imu_left_gyro_x, imu_left_gyro_y, imu_left_gyro_z, \
+			imu_right_linaccel_x, imu_right_linaccel_y, imu_right_linaccel_z, \
+			imu_right_gyro_x, imu_right_gyro_y, imu_right_gyro_z = np.array(item.split(","), dtype=float)
+		#print(time.time() - start)
+
+		features = np.array([clicks, movements, presses, hrm_rate,
+			imu_left_linaccel_x, imu_left_linaccel_y, imu_left_linaccel_z,
+			imu_left_gyro_x, imu_left_gyro_y, imu_left_gyro_z,
+			imu_right_linaccel_x, imu_right_linaccel_y, imu_right_linaccel_z,
+			imu_right_gyro_x, imu_right_gyro_y, imu_right_gyro_z])
+
+		#print(queue_pc_data.qsize(), queue_hrm.qsize(), queue_imu.qsize())
+
+		is_burnout = predict(features)
+	
+		if is_burnout:
+			print("BURNOUT!")
+
+def hrm_reader(queue_hrm):
+	local_timestamp = global_timestamp
+
+	hrm_rate = 70
+	received_data = True
+	while True:
+		try:
+			received = int(hrm_serial.readline()[:2])
+			if received > 60:
+				hrm_rate = received
+				received_data = True
+		except:
+			pass
+
+		if time.time() > local_timestamp:
+			local_timestamp += 1.
+
+			queue_hrm.put(str(hrm_rate))
+			if not received_data:
+				print("HRM is not connected")
+			received_data = False
+
+def enough_data(data_for_calibration, amount):
+    return len(data_for_calibration['l']) > amount and \
+        len(data_for_calibration['r']) > amount
+
+def calibrate(data_for_calibration):
+	if len(data_for_calibration['l']):
+		median_left = np.median(data_for_calibration['l'][-sampling_rate*calibration_duration:], axis=0)
+	else:
+		median_left = np.array([0.,0.,0.,0.,0.,0.])
+	if len(data_for_calibration['r']):
+		median_right = np.median(data_for_calibration['r'][-sampling_rate*calibration_duration:], axis=0)
+	else:
+		median_right = np.array([0.,0.,0.,0.,0.,0.])
+    
+	calibration = {'l': {'median':median_left}, 'r': {'median':median_right}}
+	return calibration
+
+def preprocess_imu(data_for_inference, calibration):
+	if len(data_for_inference['l']):
+		left = abs(np.mean(data_for_inference['l'] - calibration['l']['median'], axis=0))
+	else:
+		left = np.array([0.,0.,0.,0.,0.,0.])
+	if len(data_for_inference['r']):
+		right = abs(np.mean(data_for_inference['r'] - calibration['r']['median'], axis=0))
+	else:
+		right = np.array([0.,0.,0.,0.,0.,0.])
+
+	return np.concatenate([left, right])
+
+def array2str(array):
+    string = ""
+    for element in array:
+        string += str(element) + ","
+    return string[:-1]
+
+def imu_server(queue_imu):
+	local_timestamp = global_timestamp
+
+	data_for_calibration = {'l': [], 'r': []}
+	data_for_inference = {'l': [], 'r': []}
+	calibration_needed = True
+	calibration = {'l': {'median':np.array([0,0,0,0,0,0])}, 'r': {'median':np.array([0,0,0,0,0,0])}}
+
+	start = time.time()
+	while True:
+		try:
+			received_bytes = UDP_socket.recv(bufferSize)
+			message = received_bytes.decode('utf-8').replace('\n', '').split(',')
+			name = message.pop(0)
+			data = np.array(message, dtype = float)
+
+			if calibration_needed:
+				data_for_calibration[name].append(data)
+				end = time.time()
+				if end - start > calibration_duration:
+					calibration_needed = False
+					calibration = calibrate(data_for_calibration)
+			else:
+				data_for_inference[name].append(data)
+
+				if time.time() > local_timestamp:
+					local_timestamp += 1.
+
+					queue_imu.put(array2str(preprocess_imu(data_for_inference, calibration)))
+					data_for_inference = {'l': [], 'r': []}
+		except:
+			pass
 
 def mouse_on_move(x, y):
 	queue_move.put(str(x)+","+str(y))
@@ -60,77 +205,9 @@ def mouse_on_click(x, y, button, pressed):
 def keyboard_on_press(key):
 	queue_keyboard.put("keyboard press")
 
-def predict(features):
-	return features[0] > 2
-	
-def inference(queue_pc_data, queue_hrm, queue_imu_left, queue_imu_right):
-	while True:
-		#start = time.time()
-
-		item = queue_pc_data.get()
-		#print(time.time() - start)
-		clicks, presses, movements = np.array(item.split(","), dtype=float)
-		clicks = np.clip(clicks, clicks_min, clicks_max)
-		presses = np.clip(presses, presses_min, presses_max)
-		movements = np.clip(movements, movements_min, movements_max)
-
-		hrm_rate = float(queue_hrm.get())
-		#print(time.time() - start)
-		hrm_rate = np.clip(hrm_rate, hrm_rate_min, hrm_rate_max)
-
-		item = queue_imu_left.get()
-		#print(time.time() - start)
-		imu_left_x, imu_left_y, imu_left_z = np.array(item.split(","), dtype=float)
-		imu_left_x = np.clip(imu_left_x, imu_left_x_min, imu_left_x_max)
-		imu_left_y = np.clip(imu_left_y, imu_left_y_min, imu_left_y_max)
-		imu_left_z = np.clip(imu_left_z, imu_left_z_min, imu_left_z_max)
-
-		item = queue_imu_right.get()
-		#print(time.time() - start)
-		imu_right_x, imu_right_y, imu_right_z = np.array(item.split(","), dtype=float)
-		imu_right_x = np.clip(imu_right_x, imu_right_x_min, imu_right_x_max)
-		imu_right_y = np.clip(imu_right_y, imu_right_y_min, imu_right_y_max)
-		imu_right_z = np.clip(imu_right_z, imu_right_z_min, imu_right_z_max)
-
-		print("clicks:", clicks, "presses", presses, "movements", movements, "hrm", hrm_rate,
-			"imu_left_x", imu_left_x, "imu_left_y", imu_left_y, "imu_left_z", imu_left_z,
-			"imu_right_x", imu_right_x, "imu_right_y", imu_right_y, "imu_right_z", imu_right_z)
-
-		features = [clicks, presses, movements, hrm_rate,
-			imu_left_x, imu_left_y, imu_left_z,
-			imu_right_x, imu_right_y, imu_right_z]
-
-		is_burnout = predict(features)
-	
-		if is_burnout:
-			print("BURNOUT!")
-
-def hrm_reader(queue_hrm):
-	hrm_rate = 90
-	start = time.time()
-	while True:
-		try:
-			hrm_rate = int(hrm_serial.readline()[:2])
-		except:
-			print("HRM is not connected")
-
-		end = time.time()
-		if end - start > 1.0:
-			queue_hrm.put(str(hrm_rate))
-
-
-def imu_reader(queue_imu, device_imu, test):
-	imu_x = test[0]
-	imu_y = test[1]
-	imu_z = test[2]
-
-	start = time.time()
-	while True:
-		end = time.time()
-		if end - start > 1.0:
-			queue_imu.put(str(imu_x)+","+str(imu_y)+","+str(imu_z))
-
 def pc_data_reader(queue_mouse, queue_keyboard, queue_move, queue_pc_data):
+	local_timestamp = global_timestamp
+
 	clicks_statistics = [0, 0, 0, 0]
 	presses_statistics = [0, 0, 0, 0]
 	movements_statistics = [0, 0, 0, 0]
@@ -143,7 +220,6 @@ def pc_data_reader(queue_mouse, queue_keyboard, queue_move, queue_pc_data):
 	movements = 0
 
 	print("Detecting...")
-	start = time.time()
 	
 	while True:
 		try:
@@ -165,8 +241,9 @@ def pc_data_reader(queue_mouse, queue_keyboard, queue_move, queue_pc_data):
 		except:
 			pass	
 		
-		end = time.time()
-		if end - start > 1.:
+		if time.time() > local_timestamp:
+			local_timestamp += 1.
+
 			clicks_statistics.append(clicks)
 			presses_statistics.append(presses)
 			movements_statistics.append(movements)
@@ -185,27 +262,30 @@ def pc_data_reader(queue_mouse, queue_keyboard, queue_move, queue_pc_data):
 
 			queue_pc_data.put(str(clicks_avg)+","+str(presses_avg)+","+str(movements_avg))
 
-			start = time.time()
-
-mouse_listener = mouse.Listener(
-		on_move=mouse_on_move,
-		on_click=mouse_on_click
-)
-
-
-keyboard_listener = keyboard.Listener(on_press=keyboard_on_press)
-
 pc_data_thread = Thread(target=pc_data_reader, args=(queue_mouse, queue_keyboard, queue_move, queue_pc_data))
+mouse_listener = mouse.Listener(on_move=mouse_on_move, on_click=mouse_on_click)
+keyboard_listener = keyboard.Listener(on_press=keyboard_on_press)
 hrm_thread = Thread(target=hrm_reader, args=(queue_hrm,))
-inference_thread = Thread(target=inference, args=(queue_pc_data, queue_hrm, queue_imu_left, queue_imu_right))
-imu_left_thread = Thread(target=imu_reader, args=(queue_imu_left, imu_left_device, (228, 404, 999)))
-imu_right_thread = Thread(target=imu_reader, args=(queue_imu_right, imu_right_device, (1, 2, 3)))
+imu_server_thread = Thread(target=imu_server, args=(queue_imu,))
+inference_thread = Thread(target=inference, args=(queue_pc_data, queue_hrm, queue_imu))
+
+global_timestamp = time.time()
 
 pc_data_thread.start()
 mouse_listener.start()
 keyboard_listener.start()
 hrm_thread.start()
-imu_left_thread.start()
-imu_right_thread.start()
+
+queue_pc_data.get()
+
+imu_server_thread.start()
+print("Waiting for calibration...")
+queue_imu.get()
+print("Done")
+
+time.sleep(1)
+
 inference_thread.start()
+
+
 

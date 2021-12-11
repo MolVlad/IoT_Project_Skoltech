@@ -7,14 +7,18 @@
 
 Adafruit_MPU6050 mpu;
 
+const char name = 'l'; // l or r
+
 // WiFi network name and password:
-const char * networkName = "Masny"; // specify SSID here
-const char * networkPswd = "5sJn8eXw"; // specify password here
+//const char * networkName = "Mi Phone"; // specify SSID here
+//const char * networkPswd = "forlab18only"; // specify password here
+const char * networkName = "MGTS_GPON_8D20"; // specify SSID here
+const char * networkPswd = "mQU3kaXP"; // specify password here
 
 //IP address to send UDP data to:
 // either use the ip address of the server or 
 // a network broadcast address
-const char * udpAddress = "192.168.0.103"; // specify server IP here
+const char * udpAddress = "192.168.1.5"; // specify server IP here
 const int udpPort = 60001; // specify server port here
 
 //Are we currently connected?
@@ -63,16 +67,16 @@ void loop(){
   if(connected){
     //Send a packet
     udp.beginPacket(udpAddress,udpPort);
-    udp.printf("%lf, %lf, %lf, %lf, %lf, %lf\n", 
+    udp.printf("%c, %lf, %lf, %lf, %lf, %lf, %lf\n", name,
                               a.acceleration.x, a.acceleration.y, a.acceleration.z,
                               g.gyro.x, g.gyro.y, g.gyro.z);
 
     udp.endPacket();
   }
-  Serial.printf("%lf, %lf, %lf, %lf, %lf, %lf\n", 
+  Serial.printf("name: %c; connected: %d; data: %lf, %lf, %lf, %lf, %lf, %lf\n",  name, connected,
                               a.acceleration.x, a.acceleration.y, a.acceleration.z,
                               g.gyro.x, g.gyro.y, g.gyro.z);
-  delay(27);
+  delayMicroseconds(27778);
 }
 
 void connectToWiFi(const char * ssid, const char * pwd){
