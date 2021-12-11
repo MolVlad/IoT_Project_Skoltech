@@ -1,11 +1,4 @@
-from pynput import mouse, keyboard
-from datetime import datetime
 import numpy as np
-import queue
-from threading import Thread
-import time
-import os
-import serial
 import socket
 import pickle
 
