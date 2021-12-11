@@ -11,8 +11,6 @@ import os
 import serial
 import socket
 
-ports = [50003,50018,50004,50002,50005,50006,50007,50011,50012,50013,50008,50009,50010,50014,50015,50016]
-
 hrm_device = "/dev/ttyUSB0"
 
 try:
@@ -25,12 +23,14 @@ except:
 
 sampling_rate = 36
 calibration_duration = 1
-proba_threshold = 0.5
 
 localIP     = '' #specify your server IP
 localPort_imu   = 60001 # specify port
 localPort_data   = 60002 # specify port
 bufferSize  = 1024 #define buffer size
+
+target_port = 60003
+target_ip = "192.168.1.5"
 
 queue_mouse = queue.Queue(maxsize=10000)
 queue_move = queue.Queue(maxsize=10000)
@@ -45,9 +45,8 @@ UDP_socket_imu.settimeout(0.01)
 
 UDP_socket_data = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) #create socket
 UDP_socket_data.bind((localIP, localPort_data)) # bind port and ip
-UDP_socket_data.settimeout(0.01)
 
-def inference(queue_pc_data, queue_hrm, queue_imu):
+def upload_data(queue_pc_data, queue_hrm, queue_imu):
 	queue_pc_data.queue.clear()
 	queue_hrm.queue.clear()
 	queue_imu.queue.clear()
@@ -77,8 +76,16 @@ def inference(queue_pc_data, queue_hrm, queue_imu):
 
 		#print(queue_pc_data.qsize(), queue_hrm.qsize(), queue_imu.qsize())
 
-		print(array2str(features))
-		UDP_socket_data.sendto(bytes(array2str(features), "utf-8"),("13.40.48.121",50027))
+		#print(array2str(features))
+		print("Sending data to the server...")
+		UDP_socket_data.sendto(bytes(array2str(features), "utf-8"),(target_ip,target_port))
+
+def receive_inference():
+	while True:
+		received_bytes = UDP_socket_data.recv(bufferSize)
+		is_burnout = np.array(received_bytes.decode('utf-8'), dtype=float)
+		if is_burnout:
+			print("BURNOUT!")
 
 def hrm_reader(queue_hrm):
 	local_timestamp = global_timestamp
@@ -99,7 +106,8 @@ def hrm_reader(queue_hrm):
 
 			queue_hrm.put(str(hrm_rate))
 			if not received_data:
-				print("HRM is not connected")
+				pass
+				#print("HRM is not connected")
 			received_data = False
 
 def enough_data(data_for_calibration, amount):
@@ -242,7 +250,8 @@ mouse_listener = mouse.Listener(on_move=mouse_on_move, on_click=mouse_on_click)
 keyboard_listener = keyboard.Listener(on_press=keyboard_on_press)
 hrm_thread = Thread(target=hrm_reader, args=(queue_hrm,))
 imu_server_thread = Thread(target=imu_server, args=(queue_imu,))
-inference_thread = Thread(target=inference, args=(queue_pc_data, queue_hrm, queue_imu))
+upload_data_thread = Thread(target=upload_data, args=(queue_pc_data, queue_hrm, queue_imu))
+receive_inference_thread = Thread(target=receive_inference)
 
 global_timestamp = time.time()
 
@@ -260,7 +269,7 @@ print("Done")
 
 time.sleep(1)
 
-inference_thread.start()
-
+upload_data_thread.start()
+receive_inference_thread.start()
 
 
