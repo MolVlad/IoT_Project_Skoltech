@@ -10,16 +10,6 @@ import time
 import os
 import serial
 import socket
-import pickle
-
-#import ssl
-#from urllib.request import http
-#ssl._create_default_https_context = ssl._create_unverified_context
-#endpoint = "/api/events?accessKey=ist_oreA-PIOUM3vQQIVkPe4a38O-yozwVNN&bucketKey=PDFFXR8PBQKH"
-#feature_names = ['mouse_clicks', 'mouse_movement', 'buttons_pressed', 'heart_rate', 
-#        'left_linaccel_x','left_linaccel_y','left_linaccel_z','left_gyro_x','left_gyro_y','left_gyro_z',
-#        'right_linaccel_x','right_linaccel_y','right_linaccel_z','right_gyro_x','right_gyro_y','right_gyro_z',
-#        ]
 
 ports = [50003,50018,50004,50002,50005,50006,50007,50011,50012,50013,50008,50009,50010,50014,50015,50016]
 
@@ -33,15 +23,13 @@ except:
 	os.system("ls /dev/ | grep USB")
 	exit()
 
-with open('model.pkl', 'rb') as fid:
-	loaded_model = pickle.load(fid)
-
 sampling_rate = 36
 calibration_duration = 1
 proba_threshold = 0.5
 
-localIP     = '192.168.1.5' #specify your server IP
-localPort   = 60001 # specify port
+localIP     = '' #specify your server IP
+localPort_imu   = 60001 # specify port
+localPort_data   = 60002 # specify port
 bufferSize  = 1024 #define buffer size
 
 queue_mouse = queue.Queue(maxsize=10000)
@@ -51,25 +39,14 @@ queue_pc_data = queue.Queue(maxsize=10000)
 queue_hrm = queue.Queue(maxsize=10000)
 queue_imu = queue.Queue(maxsize=10000)
 
-UDP_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) #create socket
-UDP_socket.bind((localIP, localPort)) # bind port and ip
-UDP_socket.settimeout(0.01)
+UDP_socket_imu = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) #create socket
+UDP_socket_imu.bind((localIP, localPort_imu)) # bind port and ip
+UDP_socket_imu.settimeout(0.01)
 
-def predict(features):
-	predicted_proba = loaded_model.predict_proba([features])[:,1]
+UDP_socket_data = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) #create socket
+UDP_socket_data.bind((localIP, localPort_data)) # bind port and ip
+UDP_socket_data.settimeout(0.01)
 
-	print(array2str(features.round(2)))
-	print(predicted_proba)
-
-	print(features[0])
-	for i, _ in enumerate(features):
-		UDP_socket.sendto(bytes(str(features[i].round(2)), "utf-8"),("13.40.48.121",ports[i]))
-
-	UDP_socket.sendto(bytes(str(predicted_proba.round(2)[0]), "utf-8"),("13.40.48.121",50020))
-	UDP_socket.sendto(bytes(str(int(predicted_proba.round(2)[0] > proba_threshold)), "utf-8"),("13.40.48.121",50021))
-
-	return predicted_proba > proba_threshold
-	
 def inference(queue_pc_data, queue_hrm, queue_imu):
 	queue_pc_data.queue.clear()
 	queue_hrm.queue.clear()
@@ -100,10 +77,8 @@ def inference(queue_pc_data, queue_hrm, queue_imu):
 
 		#print(queue_pc_data.qsize(), queue_hrm.qsize(), queue_imu.qsize())
 
-		is_burnout = predict(features)
-	
-		if is_burnout:
-			print("BURNOUT!")
+		print(array2str(features))
+		UDP_socket_data.sendto(bytes(array2str(features), "utf-8"),("13.40.48.121",50027))
 
 def hrm_reader(queue_hrm):
 	local_timestamp = global_timestamp
@@ -173,7 +148,7 @@ def imu_server(queue_imu):
 	start = time.time()
 	while True:
 		try:
-			received_bytes = UDP_socket.recv(bufferSize)
+			received_bytes = UDP_socket_imu.recv(bufferSize)
 			message = received_bytes.decode('utf-8').replace('\n', '').split(',')
 			name = message.pop(0)
 			data = np.array(message, dtype = float)
