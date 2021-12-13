@@ -1,6 +1,5 @@
 import sys
 from PyQt5.QtGui import QFont
-import numpy as np
 from PyQt5 import QtCore
 from PyQt5 import QtWidgets
 from PyQt5.QtWidgets import *
@@ -26,7 +25,7 @@ class MainWindow(QMainWindow):
         self.label.setStyleSheet('color: yellow') 
         self.label.resize(150, 30)
         self.label.move(30, 10) # change label location
-        timerTime = QtCore.QTimer(self) # clase label after 10s
+        timerTime = QtCore.QTimer(self) # close label after 10s
         timerTime.timeout.connect(self.close_window)
         timerTime.start(10000)
 
